@@ -47,7 +47,19 @@ function freshState() {
 }
 
 let state = freshState();
-let mode = "beginner"; // "beginner" | "normal" — persists across new games
+let mode = "beginner"; // "beginner" | "normal" — how much guidance is shown
+let opponentType = "computer"; // "computer" | "human" — who plays Black
+
+function isAiTurn() {
+  return opponentType === "computer" && state.turn === "black";
+}
+function isHumanTurn() {
+  return !isAiTurn();
+}
+function displayName(player) {
+  if (opponentType === "computer" && player === "black") return "Computer";
+  return cap(player);
+}
 
 /* ----------------------------- Rules ------------------------------- */
 
@@ -137,18 +149,18 @@ function applyMove(player, source, die) {
 
   if (dest < 1 || dest > 24) {
     state.off[player]++;
-    logText = `${cap(player)}: ${fromLabel} \u2192 off (${die})`;
+    logText = `${displayName(player)}: ${fromLabel} \u2192 off (${die})`;
   } else {
     const p = state.points[dest];
     if (p.owner && p.owner !== player && p.count === 1) {
       state.bar[opponent(player)]++;
       p.owner = player;
       p.count = 1;
-      logText = `${cap(player)}: ${fromLabel} \u2192 ${dest} (${die}) — hit!`;
+      logText = `${displayName(player)}: ${fromLabel} \u2192 ${dest} (${die}) — hit!`;
     } else {
       p.owner = player;
       p.count++;
-      logText = `${cap(player)}: ${fromLabel} \u2192 ${dest} (${die})`;
+      logText = `${displayName(player)}: ${fromLabel} \u2192 ${dest} (${die})`;
     }
   }
 
@@ -172,6 +184,70 @@ function anyLegalMoveRemaining(player) {
   return false;
 }
 
+/* ------------------------------- AI -------------------------------- */
+
+// A simple heuristic opponent: no lookahead, just scores each candidate
+// move by immediate value (bearing off, hitting, safety, point-making).
+function evaluateMove(player, source, die) {
+  const dest = destinationForDie(player, source, die);
+  let score = 0;
+
+  if (dest < 1 || dest > 24) {
+    score += 60; // bearing off is always good progress
+  } else {
+    const destPoint = state.points[dest];
+    const isHit = !!(destPoint.owner && destPoint.owner !== player && destPoint.count === 1);
+    if (isHit) score += 35;
+    const priorOwnCount = destPoint.owner === player ? destPoint.count : 0;
+    const countAfter = priorOwnCount + 1;
+    if (countAfter >= 2) score += 12; // makes/reinforces a safe point
+    else if (!isHit) score -= 8; // leaves a new blot
+  }
+
+  if (source !== "bar") {
+    const countAfterSource = state.points[source].count - 1;
+    if (countAfterSource === 1) score -= 8; // leaves a blot behind
+  }
+
+  score += die * 0.5; // small tiebreak toward bigger progress
+  return score;
+}
+
+function chooseAiMove() {
+  const player = state.turn;
+  const diceValues = [...new Set(state.remaining)];
+  let best = null;
+  for (const die of diceValues) {
+    for (const source of legalSourcesForDie(player, die)) {
+      const score = evaluateMove(player, source, die);
+      if (!best || score > best.score) best = { source, die, score };
+    }
+  }
+  return best;
+}
+
+function aiPlayTurn() {
+  if (state.gameOver || !isAiTurn()) return;
+
+  if (state.remaining.length === 0 || !anyLegalMoveRemaining(state.turn)) {
+    if (state.remaining.length > 0) {
+      addLog(`${displayName(state.turn)} has no more legal moves.`);
+      state.remaining = [];
+      render();
+    }
+    setTimeout(() => {
+      if (!state.gameOver) endTurn();
+    }, 500);
+    return;
+  }
+
+  const move = chooseAiMove();
+  applyMove(state.turn, move.source, move.die);
+  render();
+
+  if (!state.gameOver) setTimeout(aiPlayTurn, 700);
+}
+
 /* ----------------------------- Dice -------------------------------- */
 
 function rollDice() {
@@ -182,10 +258,10 @@ function rollDice() {
   state.usedValues = [];
   state.hasRolled = true;
   state.selectedDie = null;
-  addLog(`${cap(state.turn)} rolls ${d1} and ${d2}${d1 === d2 ? " (doubles!)" : ""}`);
+  addLog(`${displayName(state.turn)} rolls ${d1} and ${d2}${d1 === d2 ? " (doubles!)" : ""}`);
 
   if (!anyLegalMoveRemaining(state.turn)) {
-    addLog(`${cap(state.turn)} has no legal moves.`);
+    addLog(`${displayName(state.turn)} has no legal moves.`);
     state.remaining = [];
   }
 
@@ -200,6 +276,13 @@ function endTurn() {
   state.selectedDie = null;
   state.hasRolled = false;
   render();
+
+  if (!state.gameOver && isAiTurn()) {
+    setTimeout(() => {
+      rollDice();
+      setTimeout(aiPlayTurn, 650);
+    }, 500);
+  }
 }
 
 /* ----------------------------- Logging ------------------------------ */
@@ -223,7 +306,7 @@ function render() {
   renderTurnIndicator();
   renderButtons();
   renderTips();
-  renderModeButtons();
+  renderToggles();
 }
 
 function renderBoard() {
@@ -317,7 +400,7 @@ function renderOff() {
 }
 
 function isLegalSource(source) {
-  if (state.gameOver || !state.hasRolled || state.selectedDie === null) return false;
+  if (state.gameOver || !state.hasRolled || state.selectedDie === null || !isHumanTurn()) return false;
   const sources = legalSourcesForDie(state.turn, state.selectedDie);
   return sources.includes(source);
 }
@@ -341,7 +424,7 @@ function renderDice() {
       usedPool.splice(usedIdx, 1);
       die.classList.add("used");
     } else {
-      const legalNow = legalSourcesForDie(state.turn, value).length > 0;
+      const legalNow = isHumanTurn() && legalSourcesForDie(state.turn, value).length > 0;
       if (!legalNow) die.classList.add("disabled");
       if (state.selectedDie === value && !selectedAssigned) {
         die.classList.add("selected");
@@ -354,13 +437,13 @@ function renderDice() {
 }
 
 function onDieClick(value) {
-  if (legalSourcesForDie(state.turn, value).length === 0) return;
+  if (!isHumanTurn() || legalSourcesForDie(state.turn, value).length === 0) return;
   state.selectedDie = state.selectedDie === value ? null : value;
   render();
 }
 
 function onSourceClick(source) {
-  if (state.selectedDie === null) return;
+  if (!isHumanTurn() || state.selectedDie === null) return;
   applyMove(state.turn, source, state.selectedDie);
   state.selectedDie = null;
 
@@ -370,7 +453,7 @@ function onSourceClick(source) {
   }
 
   if (state.remaining.length === 0 || !anyLegalMoveRemaining(state.turn)) {
-    if (state.remaining.length > 0) addLog(`${cap(state.turn)} has no more legal moves.`);
+    if (state.remaining.length > 0) addLog(`${displayName(state.turn)} has no more legal moves.`);
     render();
     setTimeout(() => {
       if (!state.gameOver) endTurn();
@@ -387,38 +470,57 @@ function renderTurnIndicator() {
     el.textContent = "Game over";
     return;
   }
+  if (isAiTurn()) {
+    el.textContent = state.hasRolled ? "Computer is moving\u2026" : "Computer is thinking\u2026";
+    return;
+  }
   if (!state.hasRolled) {
-    el.textContent = `${cap(state.turn)} to roll`;
+    el.textContent = `${displayName(state.turn)} to roll`;
   } else if (state.bar[state.turn] > 0) {
-    el.textContent = `${cap(state.turn)} must enter from the bar`;
+    el.textContent = `${displayName(state.turn)} must enter from the bar`;
   } else if (state.selectedDie !== null) {
-    el.textContent = `${cap(state.turn)}: pick a checker to move ${state.selectedDie}`;
+    el.textContent = `${displayName(state.turn)}: pick a checker to move ${state.selectedDie}`;
   } else {
-    el.textContent = `${cap(state.turn)}: pick a die`;
+    el.textContent = `${displayName(state.turn)}: pick a die`;
   }
 }
 
 function renderButtons() {
-  document.getElementById("rollBtn").disabled = state.hasRolled && state.remaining.length > 0;
-  document.getElementById("rollBtn").style.display = state.hasRolled ? "none" : "block";
+  const human = isHumanTurn();
+  document.getElementById("rollBtn").disabled = !human || (state.hasRolled && state.remaining.length > 0);
+  document.getElementById("rollBtn").style.display = state.hasRolled || !human ? "none" : "block";
   document.getElementById("endTurnBtn").disabled =
-    state.gameOver || !state.hasRolled || (state.remaining.length > 0 && anyLegalMoveRemaining(state.turn));
+    state.gameOver || !human || !state.hasRolled || (state.remaining.length > 0 && anyLegalMoveRemaining(state.turn));
 }
 
 /* ----------------------------- Beginner tips -------------------------- */
+
+const STRATEGY_TIPS = [
+  "Try to make your own 5-point early (point 5 for White, point 20 for Black) \u2014 it's the single most valuable point on the board for blocking your opponent.",
+  "A \u201cblot\u201d is a checker alone on a point. Avoid leaving one within reach of enemy checkers unless you have a good reason to.",
+  "Two or more of your checkers together \u201cmake\u201d a point your opponent can't land on. A row of made points forms a \u201cprime\u201d that's very hard to escape past.",
+  "If you're ahead in the race (fewer total pips to travel), focus on running your checkers home safely rather than taking risks.",
+  "If you're behind in the race, playing it safe rarely wins \u2014 look for chances to hit an opposing blot and slow them down instead.",
+  "Holding a made point deep in your opponent's home board (an \u201canchor\u201d) is a safe way to stay in the game when you're behind.",
+  "Hitting an opponent's blot sends it all the way back to the bar \u2014 often a bigger swing than the pips you moved.",
+];
 
 function getBeginnerTip() {
   const turn = state.turn;
 
   if (state.gameOver) return "";
 
+  if (isAiTurn()) {
+    return `${displayName("black")} is taking its turn \u2014 you'll get control back once it finishes.`;
+  }
+
   if (!state.hasRolled) {
-    return `${cap(turn)}'s turn. Click "Roll dice" to see how far you can move — each die is a number of points to travel.`;
+    return `${displayName(turn)}'s turn. Click "Roll dice" to see how far you can move — each die is a number of points to travel.`;
   }
 
   if (state.bar[turn] > 0) {
     if (state.selectedDie === null) {
-      return `${cap(turn)} has a checker on the bar. Pick a die below, then click the bar to bring it back onto the board. You must do this before making any other move.`;
+      return `${displayName(turn)} has a checker on the bar. Pick a die below, then click the bar to bring it back onto the board. You must do this before making any other move.`;
     }
     const entry = turn === "white" ? 25 - state.selectedDie : state.selectedDie;
     const canEnter = legalSourcesForDie(turn, state.selectedDie).includes("bar");
@@ -429,17 +531,17 @@ function getBeginnerTip() {
   }
 
   if (state.remaining.length === 0) {
-    return `No dice left to play. Click "End turn" to pass to ${cap(opponent(turn))}.`;
+    return `No dice left to play. Click "End turn" to pass to ${displayName(opponent(turn))}.`;
   }
 
   if (!anyLegalMoveRemaining(turn)) {
-    return `No legal moves available with the remaining dice. Click "End turn" to pass to ${cap(opponent(turn))}.`;
+    return `No legal moves available with the remaining dice. Click "End turn" to pass to ${displayName(opponent(turn))}.`;
   }
 
   if (state.selectedDie === null) {
     let tip = `Pick one of the highlighted dice below — that's how many points your checker will travel.`;
     if (allCheckersInHome(turn)) {
-      tip += ` All of ${turn === "white" ? "your" : "their"} checkers are home, so you can start bearing them off.`;
+      tip += ` All of ${displayName(turn)}'s checkers are home, so bearing off has started.`;
     }
     return tip;
   }
@@ -447,45 +549,79 @@ function getBeginnerTip() {
   return `Click a glowing checker (or the bar, if lit up) to move it ${state.selectedDie} point${state.selectedDie === 1 ? "" : "s"}. Landing on a lone opposing checker — a "blot" — sends it to the bar!`;
 }
 
+function getStrategyTip() {
+  const turn = state.turn;
+
+  for (let i = 1; i <= 24; i++) {
+    const p = state.points[i];
+    if (p.owner === turn && p.count === 1) {
+      return `Point ${i} has just one of ${displayName(turn)}'s checkers on it \u2014 that's a blot. If an opposing checker can reach it, consider moving it somewhere safer.`;
+    }
+  }
+
+  if (allCheckersInHome(turn)) {
+    return `All checkers are home \u2014 when bearing off, clear your farthest-back point first when you have a choice, so a lucky roll can't punish a straggler.`;
+  }
+
+  const logCount = document.getElementById("moveLog").children.length;
+  return STRATEGY_TIPS[logCount % STRATEGY_TIPS.length];
+}
+
 function renderTips() {
   const box = document.getElementById("tipsBox");
   const text = document.getElementById("tipsText");
+  const stratBox = document.getElementById("strategyBox");
+  const stratText = document.getElementById("strategyText");
+
   if (mode !== "beginner") {
     box.classList.add("hidden");
+    stratBox.classList.add("hidden");
     return;
   }
+
   const tip = getBeginnerTip();
   if (!tip) {
     box.classList.add("hidden");
-    return;
+  } else {
+    box.classList.remove("hidden");
+    text.textContent = tip;
   }
-  box.classList.remove("hidden");
-  text.textContent = tip;
+
+  if (state.gameOver || isAiTurn()) {
+    stratBox.classList.add("hidden");
+  } else {
+    stratBox.classList.remove("hidden");
+    stratText.textContent = getStrategyTip();
+  }
 }
 
-function renderModeButtons() {
+function renderToggles() {
   document.getElementById("modeBeginnerBtn").classList.toggle("active", mode === "beginner");
   document.getElementById("modeNormalBtn").classList.toggle("active", mode === "normal");
+  document.getElementById("opponentHumanBtn").classList.toggle("active", opponentType === "human");
+  document.getElementById("opponentComputerBtn").classList.toggle("active", opponentType === "computer");
 }
 
 /* ----------------------------- Win modal ----------------------------- */
 
 function showWin(player) {
   document.getElementById("winTitle").textContent = "Game over";
-  document.getElementById("winText").textContent = `${cap(player)} wins by bearing off all 15 checkers!`;
+  document.getElementById("winText").textContent = `${displayName(player)} wins by bearing off all 15 checkers!`;
   document.getElementById("winModal").classList.add("open");
 }
 
 /* ----------------------------- Wiring -------------------------------- */
 
-document.getElementById("rollBtn").addEventListener("click", rollDice);
-document.getElementById("endTurnBtn").addEventListener("click", endTurn);
-document.getElementById("newGameBtn").addEventListener("click", () => {
+function resetGame() {
   state = freshState();
   document.getElementById("moveLog").innerHTML = "";
   document.getElementById("winModal").classList.remove("open");
   render();
-});
+}
+
+document.getElementById("rollBtn").addEventListener("click", rollDice);
+document.getElementById("endTurnBtn").addEventListener("click", endTurn);
+document.getElementById("newGameBtn").addEventListener("click", resetGame);
 
 document.getElementById("modeBeginnerBtn").addEventListener("click", () => {
   mode = "beginner";
@@ -496,17 +632,23 @@ document.getElementById("modeNormalBtn").addEventListener("click", () => {
   render();
 });
 
+document.getElementById("opponentHumanBtn").addEventListener("click", () => {
+  if (opponentType === "human") return;
+  opponentType = "human";
+  resetGame();
+});
+document.getElementById("opponentComputerBtn").addEventListener("click", () => {
+  if (opponentType === "computer") return;
+  opponentType = "computer";
+  resetGame();
+});
+
 document.getElementById("rulesBtn").addEventListener("click", () => {
   document.getElementById("rulesModal").classList.add("open");
 });
 document.getElementById("closeRules").addEventListener("click", () => {
   document.getElementById("rulesModal").classList.remove("open");
 });
-document.getElementById("playAgainBtn").addEventListener("click", () => {
-  state = freshState();
-  document.getElementById("moveLog").innerHTML = "";
-  document.getElementById("winModal").classList.remove("open");
-  render();
-});
+document.getElementById("playAgainBtn").addEventListener("click", resetGame);
 
 render();

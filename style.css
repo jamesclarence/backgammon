@@ -7,6 +7,7 @@
   --point-dark: #6b3a2a;
   --gold: #c9a05a;
   --gold-bright: #e0bb78;
+  --teal: #7fa08c;
   --cream: #f2e6d3;
   --ink: #201007;
   --white-checker: #f5ead9;
@@ -44,6 +45,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .mode-toggle {
@@ -323,6 +325,14 @@ body {
   color: var(--cream);
 }
 
+.strategy-box {
+  background: rgba(127,160,140,0.1);
+  border-color: rgba(127,160,140,0.4);
+}
+.strategy-label {
+  background: var(--teal);
+}
+
 .dice-area {
   display: flex;
   flex-direction: column;
@@ -452,3 +462,18 @@ button {
   margin-top: 0;
 }
 .modal-body p { line-height: 1.5; font-size: 0.92rem; }
+.modal-body h3 {
+  font-family: var(--font-display);
+  color: var(--gold-bright);
+  font-size: 1.05rem;
+  margin: 1.1rem 0 0.5rem;
+}
+.modal-body ul {
+  margin: 0 0 0.75rem 1.1rem;
+  padding: 0;
+}
+.modal-body li {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 0.5rem;
+}

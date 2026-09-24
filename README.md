@@ -12,6 +12,9 @@ A two-player, hot-seat backgammon game that runs entirely in the browser — no 
 - Blocked points, hitting blots, the bar and forced re-entry
 - Bearing off, including the "higher die if nothing farther back" rule
 - Win detection when a player bears off all 15 checkers
+- **Two ways to play:** hot-seat 2-player, or solo against a built-in computer opponent (plays Black, with a simple heuristic AI — no lookahead, but it prioritizes bearing off, hitting blots, making safe points, and not leaving blots of its own)
+- **Two guidance modes:** Beginner (a running "what to do next" tip plus a rotating strategy tip, both above the dice) and Normal (clean screen, no hints)
+- An in-game Instructions panel covering the rules and strategy basics (making points, primes, anchors, racing vs. holding, bear-off order)
 
 Not implemented: the doubling cube, and full "must use both dice if only one is playable" maximization logic — the game simply won't let you use a die that has no legal move.
 

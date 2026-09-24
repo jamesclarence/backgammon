@@ -13,6 +13,10 @@
 <header class="topbar">
   <h1>Backgammon</h1>
   <div class="topbar-right">
+    <div class="mode-toggle" id="opponentToggle" role="group" aria-label="Opponent">
+      <button id="opponentHumanBtn" class="mode-btn" data-opponent="human">2 Players</button>
+      <button id="opponentComputerBtn" class="mode-btn" data-opponent="computer">vs Computer</button>
+    </div>
     <div class="mode-toggle" id="modeToggle" role="group" aria-label="Game mode">
       <button id="modeBeginnerBtn" class="mode-btn" data-mode="beginner">Beginner</button>
       <button id="modeNormalBtn" class="mode-btn" data-mode="normal">Normal</button>
@@ -48,6 +52,11 @@
       <p id="tipsText"></p>
     </div>
 
+    <div class="tips-box strategy-box" id="strategyBox">
+      <span class="tips-label strategy-label">Strategy</span>
+      <p id="strategyText"></p>
+    </div>
+
     <div class="dice-area" id="diceArea">
       <button id="rollBtn" class="primary-btn">Roll dice</button>
       <div class="dice-row" id="diceRow"></div>
@@ -68,7 +77,8 @@
   <div class="modal">
     <h2>Instructions</h2>
     <div class="modal-body">
-      <p><strong>Modes.</strong> <em>Beginner</em> mode shows a running tip above the dice that explains what to do at each step. <em>Normal</em> mode hides those tips for a cleaner screen once you know the ropes. Switch anytime with the buttons at the top &mdash; it won't affect your game in progress.</p>
+      <p><strong>Opponent.</strong> Play <em>2 Players</em> to share the keyboard/mouse with someone else (hot-seat), or <em>vs Computer</em> to play solo against a built-in opponent that plays Black. Switch anytime with the buttons at the top — it starts a new game.</p>
+      <p><strong>Modes.</strong> <em>Beginner</em> mode shows a running tip and a strategy note above the dice that explain what to do and why. <em>Normal</em> mode hides those for a cleaner screen once you know the ropes.</p>
       <p><strong>Goal.</strong> Race all 15 of your checkers around the board and off before your opponent does.</p>
       <p><strong>Direction.</strong> White moves from point 24 down to point 1, then bears off. Black moves from point 1 up to point 24, then bears off. This is a hot-seat game &mdash; two players share one screen, taking turns.</p>
       <p><strong>Turns.</strong> Click <em>Roll dice</em>. You'll get two numbers (four if you roll doubles). Click a die to select it, then click a highlighted checker to move it that many points.</p>
@@ -77,6 +87,15 @@
       <p><strong>The bar.</strong> If you have a checker on the bar, you must re-enter it in your opponent's home board before making any other move.</p>
       <p><strong>Bearing off.</strong> Once all 15 of your checkers are in your home board (points 1&ndash;6 for White, 19&ndash;24 for Black), you can start bearing them off with a die matching the exact point, or a higher die if no checkers sit further back.</p>
       <p><strong>Winner.</strong> First player to bear off all 15 checkers wins.</p>
+      <h3>Strategy basics</h3>
+      <ul>
+        <li><strong>Safety first.</strong> A checker alone on a point (a "blot") can be hit and sent all the way back to the bar. Move blots to a point with another of your own checkers when you can.</li>
+        <li><strong>Make key points.</strong> Two or more checkers on one point form a "made point" your opponent can't land on. Your 5-point (point 5 for White, point 20 for Black) and the bar-point are especially valuable.</li>
+        <li><strong>Build primes.</strong> A row of made points in sequence forms a "prime," which can trap enemy checkers behind it entirely.</li>
+        <li><strong>Know the race.</strong> Roughly compare how far each side's checkers have left to travel. Ahead in the race? Run your checkers home and avoid risks. Behind? Playing it safe rarely wins &mdash; look for chances to hit instead.</li>
+        <li><strong>Anchors.</strong> If you're behind, a made point deep in your opponent's home board gives you a safe base and a chance at a well-timed hit later.</li>
+        <li><strong>Bear off efficiently.</strong> Clear your farthest-back point first when you have a choice, so a lucky opponent roll can't punish a straggler.</li>
+      </ul>
     </div>
     <button id="closeRules" class="primary-btn">Got it</button>
   </div>
