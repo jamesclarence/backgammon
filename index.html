@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backgammon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Karla:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <h1>Backgammon</h1>
+  <div class="topbar-right">
+    <div class="mode-toggle" id="modeToggle" role="group" aria-label="Game mode">
+      <button id="modeBeginnerBtn" class="mode-btn" data-mode="beginner">Beginner</button>
+      <button id="modeNormalBtn" class="mode-btn" data-mode="normal">Normal</button>
+    </div>
+    <button id="rulesBtn" class="ghost-btn">Instructions</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <section class="board-wrap">
+    <div class="board" id="board">
+      <!-- Top quadrants -->
+      <div class="quad quad-top-left" id="quadTopLeft"></div>
+      <div class="bar" id="barTop"></div>
+      <div class="quad quad-top-right" id="quadTopRight"></div>
+
+      <!-- Bottom quadrants -->
+      <div class="quad quad-bottom-left" id="quadBottomLeft"></div>
+      <div class="bar" id="barBottom"></div>
+      <div class="quad quad-bottom-right" id="quadBottomRight"></div>
+
+      <div class="off-tray off-top" id="offBlack" title="Black borne off"></div>
+      <div class="off-tray off-bottom" id="offWhite" title="White borne off"></div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="turn-indicator" id="turnIndicator">White to roll</div>
+
+    <div class="tips-box" id="tipsBox">
+      <span class="tips-label">Tip</span>
+      <p id="tipsText"></p>
+    </div>
+
+    <div class="dice-area" id="diceArea">
+      <button id="rollBtn" class="primary-btn">Roll dice</button>
+      <div class="dice-row" id="diceRow"></div>
+    </div>
+
+    <button id="endTurnBtn" class="ghost-btn" disabled>End turn</button>
+    <button id="newGameBtn" class="ghost-btn">New game</button>
+
+    <div class="log-wrap">
+      <h2>Move log</h2>
+      <ul id="moveLog"></ul>
+    </div>
+  </aside>
+
+</main>
+
+<div class="modal-backdrop" id="rulesModal">
+  <div class="modal">
+    <h2>Instructions</h2>
+    <div class="modal-body">
+      <p><strong>Modes.</strong> <em>Beginner</em> mode shows a running tip above the dice that explains what to do at each step. <em>Normal</em> mode hides those tips for a cleaner screen once you know the ropes. Switch anytime with the buttons at the top &mdash; it won't affect your game in progress.</p>
+      <p><strong>Goal.</strong> Race all 15 of your checkers around the board and off before your opponent does.</p>
+      <p><strong>Direction.</strong> White moves from point 24 down to point 1, then bears off. Black moves from point 1 up to point 24, then bears off. This is a hot-seat game &mdash; two players share one screen, taking turns.</p>
+      <p><strong>Turns.</strong> Click <em>Roll dice</em>. You'll get two numbers (four if you roll doubles). Click a die to select it, then click a highlighted checker to move it that many points.</p>
+      <p><strong>Blocked points.</strong> You can't land on a point held by two or more of your opponent's checkers.</p>
+      <p><strong>Hitting.</strong> Landing on a single opposing checker (a "blot") sends it to the bar.</p>
+      <p><strong>The bar.</strong> If you have a checker on the bar, you must re-enter it in your opponent's home board before making any other move.</p>
+      <p><strong>Bearing off.</strong> Once all 15 of your checkers are in your home board (points 1&ndash;6 for White, 19&ndash;24 for Black), you can start bearing them off with a die matching the exact point, or a higher die if no checkers sit further back.</p>
+      <p><strong>Winner.</strong> First player to bear off all 15 checkers wins.</p>
+    </div>
+    <button id="closeRules" class="primary-btn">Got it</button>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="winModal">
+  <div class="modal">
+    <h2 id="winTitle">Game over</h2>
+    <p id="winText"></p>
+    <button id="playAgainBtn" class="primary-btn">Play again</button>
+  </div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>
