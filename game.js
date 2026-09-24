@@ -41,6 +41,7 @@ function freshState() {
     remaining: [],  // dice values not yet used
     usedValues: [],  // dice values already consumed this turn, in order used
     selectedDie: null,
+    selectedSource: null, // the point number (or "bar") of the checker currently picked up
     hasRolled: false,
     gameOver: false,
   };
@@ -49,6 +50,7 @@ function freshState() {
 let state = freshState();
 let mode = "beginner"; // "beginner" | "normal" — how much guidance is shown
 let opponentType = "computer"; // "computer" | "human" — who plays Black
+let moveNumber = 0; // increments once per checker move, for the move log
 
 function isAiTurn() {
   return opponentType === "computer" && state.turn === "black";
@@ -134,7 +136,7 @@ function destinationForDie(player, source, die) {
   return dest; // may be < 1 or > 24, meaning bear off
 }
 
-function applyMove(player, source, die) {
+function applyMove(player, source, die, detail = null) {
   const dest = destinationForDie(player, source, die);
 
   if (source === "bar") {
@@ -164,7 +166,8 @@ function applyMove(player, source, die) {
     }
   }
 
-  addLog(logText);
+  moveNumber++;
+  addLog({ player, main: logText, detail, number: moveNumber });
 
   const idx = state.remaining.indexOf(die);
   state.remaining.splice(idx, 1);
@@ -226,12 +229,33 @@ function chooseAiMove() {
   return best;
 }
 
+// Short reason for the computer's move, nested under the move line in the
+// log. Must be called BEFORE applyMove mutates the board, since it reads
+// the pre-move state of the source and destination points.
+function describeAiMove(player, source, die) {
+  const dest = destinationForDie(player, source, die);
+
+  if (dest < 1 || dest > 24) return "Bearing off \u2014 pure progress.";
+
+  const destPoint = state.points[dest];
+  const isHit = !!(destPoint.owner && destPoint.owner !== player && destPoint.count === 1);
+  const priorOwnCount = destPoint.owner === player ? destPoint.count : 0;
+  const makesPoint = !isHit && priorOwnCount + 1 >= 2;
+  const sourceCountAfter = source === "bar" ? null : state.points[source].count - 1;
+  const leavesBlotBehind = source !== "bar" && sourceCountAfter === 1;
+
+  if (isHit) return "Hits your blot, sending it to the bar.";
+  if (makesPoint) return "Makes a safe point.";
+  if (leavesBlotBehind) return "Leaves a blot \u2014 other options were worse.";
+  return "Just advancing toward home.";
+}
+
 function aiPlayTurn() {
   if (state.gameOver || !isAiTurn()) return;
 
   if (state.remaining.length === 0 || !anyLegalMoveRemaining(state.turn)) {
     if (state.remaining.length > 0) {
-      addLog(`${displayName(state.turn)} has no more legal moves.`);
+      addLog({ player: state.turn, main: `${displayName(state.turn)} has no more legal moves.` });
       state.remaining = [];
       render();
     }
@@ -242,7 +266,8 @@ function aiPlayTurn() {
   }
 
   const move = chooseAiMove();
-  applyMove(state.turn, move.source, move.die);
+  const reason = describeAiMove(state.turn, move.source, move.die);
+  applyMove(state.turn, move.source, move.die, reason);
   render();
 
   if (!state.gameOver) setTimeout(aiPlayTurn, 700);
@@ -258,10 +283,11 @@ function rollDice() {
   state.usedValues = [];
   state.hasRolled = true;
   state.selectedDie = null;
-  addLog(`${displayName(state.turn)} rolls ${d1} and ${d2}${d1 === d2 ? " (doubles!)" : ""}`);
+  state.selectedSource = null;
+  addLog({ player: state.turn, main: `${displayName(state.turn)} rolls ${d1} and ${d2}${d1 === d2 ? " (doubles!)" : ""}` });
 
   if (!anyLegalMoveRemaining(state.turn)) {
-    addLog(`${displayName(state.turn)} has no legal moves.`);
+    addLog({ player: state.turn, main: `${displayName(state.turn)} has no legal moves.` });
     state.remaining = [];
   }
 
@@ -274,6 +300,7 @@ function endTurn() {
   state.remaining = [];
   state.usedValues = [];
   state.selectedDie = null;
+  state.selectedSource = null;
   state.hasRolled = false;
   render();
 
@@ -287,11 +314,32 @@ function endTurn() {
 
 /* ----------------------------- Logging ------------------------------ */
 
-function addLog(text) {
+function addLog({ player, main, detail = null, number = null }) {
   const log = document.getElementById("moveLog");
   const li = document.createElement("li");
-  li.textContent = text;
-  log.appendChild(li);
+  li.className = `log-entry log-${player}`;
+
+  if (number !== null) {
+    const num = document.createElement("span");
+    num.className = "log-number";
+    num.textContent = `${number}.`;
+    li.appendChild(num);
+  }
+
+  const mainEl = document.createElement("span");
+  mainEl.className = "log-main";
+  mainEl.textContent = main;
+  li.appendChild(mainEl);
+
+  if (detail) {
+    const detailEl = document.createElement("span");
+    detailEl.className = "log-detail";
+    detailEl.textContent = detail;
+    li.appendChild(detailEl);
+  }
+
+  log.insertBefore(li, log.firstChild);
+  log.scrollTop = 0;
 }
 
 function cap(s) {
@@ -343,14 +391,19 @@ function buildPointEl(pointNum, isTop) {
     const c = document.createElement("div");
     c.className = `checker ${p.owner}`;
     if (i === p.count - 1 && p.count > 5) c.textContent = p.count;
+    if (i === p.count - 1 && pointNum === state.selectedSource) c.classList.add("selected");
     if (p.count > 5 && i > 0 && i < p.count - 1) continue; // avoid overdraw, handled below
     stack.appendChild(c);
   }
   div.appendChild(stack);
 
-  if (isLegalSource(pointNum)) {
-    div.classList.add("legal-source");
-    div.addEventListener("click", () => onSourceClick(pointNum));
+  const legalSrc = isLegalSource(pointNum);
+  const legalDest = isLegalDestination(pointNum);
+
+  if (legalSrc) div.classList.add("legal-source");
+  if (legalDest && mode === "beginner") div.classList.add("legal-destination");
+  if (legalSrc || legalDest) {
+    div.addEventListener("click", () => onPointClick(pointNum));
   }
 
   return div;
@@ -367,6 +420,9 @@ function renderBar() {
     for (let i = 0; i < Math.min(count, 5); i++) {
       const c = document.createElement("div");
       c.className = `bar-checker ${player}`;
+      if (i === 0 && state.selectedSource === "bar" && player === state.turn) {
+        c.classList.add("selected");
+      }
       el.appendChild(c);
     }
     if (count > 0) {
@@ -377,7 +433,7 @@ function renderBar() {
     }
     el.classList.toggle("legal-source", isLegalSource("bar") && state.bar[state.turn] > 0 && player === state.turn);
     el.onclick = () => {
-      if (isLegalSource("bar") && player === state.turn) onSourceClick("bar");
+      if (player === state.turn) onBarClick();
     };
   });
 }
@@ -397,12 +453,36 @@ function renderOff() {
     c.className = "checker black";
     offBlack.appendChild(c);
   }
+
+  offWhite.classList.remove("legal-destination");
+  offBlack.classList.remove("legal-destination");
+  offWhite.onclick = null;
+  offBlack.onclick = null;
+
+  const bearOffTray = state.turn === "white" ? offWhite : offBlack;
+  if (isBearOffDestination(state.turn)) {
+    bearOffTray.onclick = () => performMove(state.selectedSource);
+    if (mode === "beginner") bearOffTray.classList.add("legal-destination");
+  }
 }
 
 function isLegalSource(source) {
   if (state.gameOver || !state.hasRolled || state.selectedDie === null || !isHumanTurn()) return false;
   const sources = legalSourcesForDie(state.turn, state.selectedDie);
   return sources.includes(source);
+}
+
+function isLegalDestination(pointNum) {
+  if (state.gameOver || !state.hasRolled || state.selectedDie === null || state.selectedSource === null || !isHumanTurn()) return false;
+  const dest = destinationForDie(state.turn, state.selectedSource, state.selectedDie);
+  return dest === pointNum;
+}
+
+function isBearOffDestination(player) {
+  if (state.gameOver || !state.hasRolled || state.selectedDie === null || state.selectedSource === null || !isHumanTurn()) return false;
+  if (state.turn !== player) return false;
+  const dest = destinationForDie(state.turn, state.selectedSource, state.selectedDie);
+  return dest < 1 || dest > 24;
 }
 
 function renderDice() {
@@ -439,13 +519,17 @@ function renderDice() {
 function onDieClick(value) {
   if (!isHumanTurn() || legalSourcesForDie(state.turn, value).length === 0) return;
   state.selectedDie = state.selectedDie === value ? null : value;
+  state.selectedSource = null;
   render();
 }
 
-function onSourceClick(source) {
-  if (!isHumanTurn() || state.selectedDie === null) return;
-  applyMove(state.turn, source, state.selectedDie);
+// Completes a move: applies it, clears selection state, and advances the
+// turn if no more dice can be played.
+function performMove(source) {
+  const die = state.selectedDie;
+  applyMove(state.turn, source, die);
   state.selectedDie = null;
+  state.selectedSource = null;
 
   if (state.gameOver) {
     render();
@@ -453,7 +537,7 @@ function onSourceClick(source) {
   }
 
   if (state.remaining.length === 0 || !anyLegalMoveRemaining(state.turn)) {
-    if (state.remaining.length > 0) addLog(`${displayName(state.turn)} has no more legal moves.`);
+    if (state.remaining.length > 0) addLog({ player: state.turn, main: `${displayName(state.turn)} has no more legal moves.` });
     render();
     setTimeout(() => {
       if (!state.gameOver) endTurn();
@@ -462,6 +546,46 @@ function onSourceClick(source) {
   }
 
   render();
+}
+
+// Handles a click on a board point. If a checker is already picked up and
+// this point is where it can legally go, the move is completed. Otherwise,
+// if this point holds a checker that can move with the selected die, it
+// gets picked up (highlighted) — clicking it again confirms the move.
+function onPointClick(pointNum) {
+  if (!isHumanTurn() || state.selectedDie === null) return;
+
+  if (state.selectedSource !== null) {
+    const dest = destinationForDie(state.turn, state.selectedSource, state.selectedDie);
+    if (dest === pointNum) {
+      performMove(state.selectedSource);
+      return;
+    }
+  }
+
+  if (!legalSourcesForDie(state.turn, state.selectedDie).includes(pointNum)) return;
+
+  if (state.selectedSource === pointNum) {
+    state.selectedSource = null;
+    render();
+  } else {
+    state.selectedSource = pointNum;
+    render();
+  }
+}
+
+// Same pick-up/confirm pattern as onPointClick, but for entering from the bar.
+function onBarClick() {
+  if (!isHumanTurn() || state.selectedDie === null) return;
+  if (!legalSourcesForDie(state.turn, state.selectedDie).includes("bar")) return;
+
+  if (state.selectedSource === "bar") {
+    state.selectedSource = null;
+    render();
+  } else {
+    state.selectedSource = "bar";
+    render();
+  }
 }
 
 function renderTurnIndicator() {
@@ -478,6 +602,8 @@ function renderTurnIndicator() {
     el.textContent = `${displayName(state.turn)} to roll`;
   } else if (state.bar[state.turn] > 0) {
     el.textContent = `${displayName(state.turn)} must enter from the bar`;
+  } else if (state.selectedDie !== null && state.selectedSource !== null) {
+    el.textContent = `${displayName(state.turn)}: click the destination to move`;
   } else if (state.selectedDie !== null) {
     el.textContent = `${displayName(state.turn)}: pick a checker to move ${state.selectedDie}`;
   } else {
@@ -495,15 +621,60 @@ function renderButtons() {
 
 /* ----------------------------- Beginner tips -------------------------- */
 
-const STRATEGY_TIPS = [
-  "Try to make your own 5-point early (point 5 for White, point 20 for Black) \u2014 it's the single most valuable point on the board for blocking your opponent.",
-  "A \u201cblot\u201d is a checker alone on a point. Avoid leaving one within reach of enemy checkers unless you have a good reason to.",
-  "Two or more of your checkers together \u201cmake\u201d a point your opponent can't land on. A row of made points forms a \u201cprime\u201d that's very hard to escape past.",
-  "If you're ahead in the race (fewer total pips to travel), focus on running your checkers home safely rather than taking risks.",
-  "If you're behind in the race, playing it safe rarely wins \u2014 look for chances to hit an opposing blot and slow them down instead.",
-  "Holding a made point deep in your opponent's home board (an \u201canchor\u201d) is a safe way to stay in the game when you're behind.",
-  "Hitting an opponent's blot sends it all the way back to the bar \u2014 often a bigger swing than the pips you moved.",
-];
+// Total pips (board spaces) a player still has to travel to bear everything
+// off. Lower is better. A checker on the bar counts as needing the full trip.
+function pipCount(player) {
+  let pips = state.bar[player] * 25;
+  for (let i = 1; i <= 24; i++) {
+    const p = state.points[i];
+    if (p.owner === player) pips += p.count * distanceToOff(player, i);
+  }
+  return pips;
+}
+
+// Points where this player currently has two or more checkers (a "made" point).
+function madePointsList(player) {
+  const pts = [];
+  for (let i = 1; i <= 24; i++) {
+    if (state.points[i].owner === player && state.points[i].count >= 2) pts.push(i);
+  }
+  return pts;
+}
+
+// Which single-die values (1-6) would let an opposing checker land directly
+// on pointNum right now, given the current board (ignores combined-die shots).
+function directShotsAt(pointNum, blotOwner) {
+  const attacker = opponent(blotOwner);
+  const shots = new Set();
+  for (let j = 1; j <= 24; j++) {
+    const p = state.points[j];
+    if (p.owner !== attacker || p.count === 0) continue;
+    for (let d = 1; d <= 6; d++) {
+      if (destinationForDie(attacker, j, d) === pointNum) shots.add(d);
+    }
+  }
+  return [...shots].sort((a, b) => a - b);
+}
+
+// Any way the current player can hit an opposing blot using the dice they
+// actually have left to play this turn.
+function findHitOpportunities(turn) {
+  const opp = opponent(turn);
+  const blotPoints = [];
+  for (let i = 1; i <= 24; i++) {
+    if (state.points[i].owner === opp && state.points[i].count === 1) blotPoints.push(i);
+  }
+  if (blotPoints.length === 0) return [];
+
+  const opportunities = [];
+  for (const die of [...new Set(state.remaining)]) {
+    for (const source of legalSourcesForDie(turn, die)) {
+      const dest = destinationForDie(turn, source, die);
+      if (blotPoints.includes(dest)) opportunities.push({ source, die, dest });
+    }
+  }
+  return opportunities;
+}
 
 function getBeginnerTip() {
   const turn = state.turn;
@@ -546,25 +717,71 @@ function getBeginnerTip() {
     return tip;
   }
 
+  if (state.selectedSource !== null) {
+    return `That checker is picked up \u2014 click the glowing destination to move it there, or click the checker again to put it back down.`;
+  }
+
   return `Click a glowing checker (or the bar, if lit up) to move it ${state.selectedDie} point${state.selectedDie === 1 ? "" : "s"}. Landing on a lone opposing checker — a "blot" — sends it to the bar!`;
 }
 
 function getStrategyTip() {
   const turn = state.turn;
+  const opp = opponent(turn);
 
+  // 1. A blot of yours is the single most urgent thing on the board — call
+  //    it out by exact point, and say precisely whether it can be hit right now.
   for (let i = 1; i <= 24; i++) {
     const p = state.points[i];
     if (p.owner === turn && p.count === 1) {
-      return `Point ${i} has just one of ${displayName(turn)}'s checkers on it \u2014 that's a blot. If an opposing checker can reach it, consider moving it somewhere safer.`;
+      const shots = directShotsAt(i, turn);
+      const shotText = shots.length > 0
+        ? ` Right now, ${displayName(opp)} could hit it directly with a roll of ${shots.join(" or ")}.`
+        : ` ${displayName(opp)} doesn't have a checker positioned to hit it directly on the next roll, but it's still worth covering when you get the chance.`;
+      return `Heads up: point ${i} has only one of ${displayName(turn)}'s checkers on it, with no second checker there to protect it. That's called a \u201cblot\u201d \u2014 if an opposing checker lands exactly there, your checker gets \u201chit\u201d and sent all the way back to the bar, forcing it to re-enter and travel the whole board again.${shotText} When you get the chance, move it onto a point where you already have another checker \u2014 two or more together can't be hit.`;
     }
   }
 
-  if (allCheckersInHome(turn)) {
-    return `All checkers are home \u2014 when bearing off, clear your farthest-back point first when you have a choice, so a lucky roll can't punish a straggler.`;
+  // 2. No blot of your own? Check whether you can hit one of the opponent's,
+  //    using the actual dice you currently have left to play.
+  const opportunities = findHitOpportunities(turn);
+  if (opportunities.length > 0) {
+    const { source, die, dest } = opportunities[0];
+    const fromLabel = source === "bar" ? "your checker on the bar" : `your checker on point ${source}`;
+    return `You have a hit available right now: ${fromLabel} can move to point ${dest} using your ${die}, landing on ${displayName(opp)}'s lone checker there. That would send it all the way back to the bar and cost ${displayName(opp)} a lot of ground \u2014 usually well worth taking.`;
   }
 
-  const logCount = document.getElementById("moveLog").children.length;
-  return STRATEGY_TIPS[logCount % STRATEGY_TIPS.length];
+  // 3. Bearing off is underway — report exactly how many checkers are left
+  //    and which point is farthest back.
+  if (allCheckersInHome(turn)) {
+    const orderedHome = turn === "white"
+      ? [...HOME[turn]].sort((a, b) => b - a)
+      : [...HOME[turn]].sort((a, b) => a - b);
+    let farthest = null;
+    for (const pt of orderedHome) {
+      if (state.points[pt].owner === turn && state.points[pt].count > 0) { farthest = pt; break; }
+    }
+    const remaining = 15 - state.off[turn];
+    const farthestText = farthest !== null
+      ? ` Your farthest-back checker${state.points[farthest].count > 1 ? "s sit" : " sits"} on point ${farthest} \u2014 clear that point first when you have a choice, so an unlucky roll later can't strand a straggler out there alone.`
+      : "";
+    return `Every one of ${displayName(turn)}'s checkers has made it into the home board, so you're bearing off now \u2014 permanently removing checkers once they've completed the full trip. You have ${remaining} checker${remaining === 1 ? "" : "s"} left to bear off.${farthestText}`;
+  }
+
+  // 4. Nothing urgent — report the actual race and board shape with real numbers.
+  const myPips = pipCount(turn);
+  const oppPips = pipCount(opp);
+  const diff = Math.abs(myPips - oppPips);
+  const mine = madePointsList(turn);
+  const theirs = madePointsList(opp);
+  const pointsText = `${displayName(turn)} has made ${mine.length ? mine.length + " point" + (mine.length === 1 ? "" : "s") + " so far (" + mine.join(", ") + ")" : "no points yet"}, and ${displayName(opp)} has made ${theirs.length ? theirs.length + " (" + theirs.join(", ") + ")" : "none yet"}.`;
+
+  if (myPips < oppPips) {
+    return `${displayName(turn)} has ${myPips} pips left to travel versus ${oppPips} for ${displayName(opp)} \u2014 you're ahead in the race by ${diff}. (A \u201cpip\u201d is just one space of movement; fewer left is better.) When you're ahead, the safest plan is usually to run your checkers home directly and avoid unnecessary risks. ${pointsText}`;
+  } else if (myPips > oppPips) {
+    return `${displayName(turn)} has ${myPips} pips left to travel versus ${oppPips} for ${displayName(opp)} \u2014 you're behind in the race by ${diff}. When you're behind, playing it purely safe usually won't win \u2014 you'll just lose more slowly. Look for chances to hit a blot, or hold a point deep in ${displayName(opp)}'s home board (an \u201canchor\u201d) so you have a safe base to wait for one. ${pointsText}`;
+  } else {
+    return `The race is essentially even \u2014 both ${displayName(turn)} and ${displayName(opp)} have about ${myPips} pips left to travel. With things this close, focus on making solid points (two or more checkers together, which can't be hit) and avoiding blots of your own. ${pointsText}`;
+  }
 }
 
 function renderTips() {
@@ -614,6 +831,7 @@ function showWin(player) {
 
 function resetGame() {
   state = freshState();
+  moveNumber = 0;
   document.getElementById("moveLog").innerHTML = "";
   document.getElementById("winModal").classList.remove("open");
   render();

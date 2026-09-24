@@ -17,6 +17,7 @@
       <button id="opponentHumanBtn" class="mode-btn" data-opponent="human">2 Players</button>
       <button id="opponentComputerBtn" class="mode-btn" data-opponent="computer">vs Computer</button>
     </div>
+    <button id="newGameBtn" class="ghost-btn">New game</button>
     <div class="mode-toggle" id="modeToggle" role="group" aria-label="Game mode">
       <button id="modeBeginnerBtn" class="mode-btn" data-mode="beginner">Beginner</button>
       <button id="modeNormalBtn" class="mode-btn" data-mode="normal">Normal</button>
@@ -26,6 +27,13 @@
 </header>
 
 <main class="layout">
+
+  <aside class="panel log-panel">
+    <div class="log-wrap">
+      <h2>Move log</h2>
+      <ul id="moveLog"></ul>
+    </div>
+  </aside>
 
   <section class="board-wrap">
     <div class="board" id="board">
@@ -47,6 +55,15 @@
   <aside class="panel">
     <div class="turn-indicator" id="turnIndicator">White to roll</div>
 
+    <div class="dice-center-group">
+      <div class="dice-area" id="diceArea">
+        <button id="rollBtn" class="primary-btn">Roll dice</button>
+        <div class="dice-row" id="diceRow"></div>
+      </div>
+
+      <button id="endTurnBtn" class="ghost-btn" disabled>End turn</button>
+    </div>
+
     <div class="tips-box" id="tipsBox">
       <span class="tips-label">Tip</span>
       <p id="tipsText"></p>
@@ -55,19 +72,6 @@
     <div class="tips-box strategy-box" id="strategyBox">
       <span class="tips-label strategy-label">Strategy</span>
       <p id="strategyText"></p>
-    </div>
-
-    <div class="dice-area" id="diceArea">
-      <button id="rollBtn" class="primary-btn">Roll dice</button>
-      <div class="dice-row" id="diceRow"></div>
-    </div>
-
-    <button id="endTurnBtn" class="ghost-btn" disabled>End turn</button>
-    <button id="newGameBtn" class="ghost-btn">New game</button>
-
-    <div class="log-wrap">
-      <h2>Move log</h2>
-      <ul id="moveLog"></ul>
     </div>
   </aside>
 
