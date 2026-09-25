@@ -50,17 +50,32 @@ function freshState() {
 let state = freshState();
 let mode = "beginner"; // "beginner" | "normal" — how much guidance is shown
 let opponentType = "computer"; // "computer" | "human" — who plays Black
+let humanColor = "white"; // "white" | "black" — which side the human plays vs Computer
 let moveNumber = 0; // increments once per checker move, for the move log
+let score = { white: 0, black: 0 }; // cumulative match score, across "New game" clicks
+let matchTarget = 5; // first side to reach or pass this many points wins the match
+let matchOver = false; // true once someone has reached matchTarget
+let colorChosenForMatch = false; // true once the player has confirmed White/Black for this match
 
+function aiPlayerColor() {
+  return opponent(humanColor);
+}
 function isAiTurn() {
-  return opponentType === "computer" && state.turn === "black";
+  return opponentType === "computer" && state.turn === aiPlayerColor();
 }
 function isHumanTurn() {
   return !isAiTurn();
 }
 function displayName(player) {
-  if (opponentType === "computer" && player === "black") return "Computer";
+  if (opponentType === "computer" && player === aiPlayerColor()) return "Computer";
   return cap(player);
+}
+
+// True at the very start of a match — before either side has scored or
+// made a single move. Used to gate the color choice and match-target
+// picker, which shouldn't change mid-match.
+function isMatchNotStarted() {
+  return score.white === 0 && score.black === 0 && moveNumber === 0;
 }
 
 /* ----------------------------- Rules ------------------------------- */
@@ -134,6 +149,89 @@ function destinationForDie(player, source, die) {
   if (source === "bar") return player === "white" ? 25 - die : die;
   const dest = player === "white" ? source - die : source + die;
   return dest; // may be < 1 or > 24, meaning bear off
+}
+
+/* ------------------------ Click-saving automation -------------------- */
+// Small conveniences, all triggered right after a roll or a move:
+// - a checker on the bar is the only legal source for any die, so pick it
+//   up automatically once a die is selected;
+// - whenever there's only one usable die value left this turn — whether
+//   that's because it's a doubles roll (all four the same) or because the
+//   other die of a normal roll has already been used — there's nothing
+//   left to choose between, so select it automatically.
+
+function autoSelectDie() {
+  if (!isHumanTurn() || state.gameOver || !state.hasRolled) return;
+  if (state.selectedDie !== null || state.remaining.length === 0) return;
+  const uniqueValues = [...new Set(state.remaining)];
+  if (uniqueValues.length !== 1) return;
+  const value = uniqueValues[0];
+  if (legalSourcesForDie(state.turn, value).length > 0) {
+    state.selectedDie = value;
+  }
+}
+
+function autoSelectBarSource() {
+  if (!isHumanTurn() || state.gameOver || !state.hasRolled) return;
+  if (state.selectedDie === null || state.selectedSource !== null) return;
+  if (state.bar[state.turn] === 0) return;
+  if (legalSourcesForDie(state.turn, state.selectedDie).includes("bar")) {
+    state.selectedSource = "bar";
+  }
+}
+
+/* ---------------------------- Drag and drop --------------------------- */
+// Every checker can also be dragged instead of clicked. Dragging a checker
+// computes, up front, every remaining die that legally moves it, then
+// drops onto whichever destination matches one of those dice.
+
+let dragSourceValue = null; // point number or "bar" currently being dragged
+let dragCandidates = [];    // [{die, dest}] legal destinations for that source
+
+function clearDragHighlights() {
+  document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
+}
+
+function highlightDragTargets() {
+  clearDragHighlights();
+  for (const { dest } of dragCandidates) {
+    if (dest < 1 || dest > 24) {
+      document.getElementById(state.turn === "white" ? "offWhite" : "offBlack").classList.add("drag-target");
+    } else {
+      const el = document.querySelector(`.point[data-point="${dest}"]`);
+      if (el) el.classList.add("drag-target");
+    }
+  }
+}
+
+function onCheckerDragStart(e, source) {
+  if (!isHumanTurn() || state.gameOver || !state.hasRolled) { e.preventDefault(); return; }
+  const validDice = [...new Set(state.remaining)]
+    .filter((d) => legalSourcesForDie(state.turn, d).includes(source))
+    .sort((a, b) => a - b);
+  if (validDice.length === 0) { e.preventDefault(); return; }
+  dragSourceValue = source;
+  dragCandidates = validDice.map((d) => ({ die: d, dest: destinationForDie(state.turn, source, d) }));
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", String(source));
+  highlightDragTargets();
+}
+
+function onCheckerDragEnd() {
+  dragSourceValue = null;
+  dragCandidates = [];
+  clearDragHighlights();
+}
+
+function handleDrop(target) {
+  if (dragSourceValue === null) return;
+  const candidate = dragCandidates.find((c) => (target === "off" ? (c.dest < 1 || c.dest > 24) : c.dest === target));
+  const source = dragSourceValue;
+  onCheckerDragEnd();
+  if (!candidate) return;
+  state.selectedDie = candidate.die;
+  state.selectedSource = source;
+  performMove(source);
 }
 
 function applyMove(player, source, die, detail = null) {
@@ -291,7 +389,29 @@ function rollDice() {
     state.remaining = [];
   }
 
+  autoSelectDie();
+  autoSelectBarSource();
   render();
+}
+
+function maybeStartAiTurn() {
+  if (!state.gameOver && isAiTurn()) {
+    setTimeout(() => {
+      rollDice();
+      setTimeout(aiPlayTurn, 650);
+    }, 500);
+  }
+}
+
+// Forces an explicit White/Black choice at the start of a fresh match
+// against the computer, rather than silently defaulting to White.
+function maybeShowColorChoice() {
+  const modal = document.getElementById("colorChoiceModal");
+  if (opponentType === "computer" && isMatchNotStarted() && !colorChosenForMatch) {
+    modal.classList.add("open");
+  } else {
+    modal.classList.remove("open");
+  }
 }
 
 function endTurn() {
@@ -303,13 +423,7 @@ function endTurn() {
   state.selectedSource = null;
   state.hasRolled = false;
   render();
-
-  if (!state.gameOver && isAiTurn()) {
-    setTimeout(() => {
-      rollDice();
-      setTimeout(aiPlayTurn, 650);
-    }, 500);
-  }
+  maybeStartAiTurn();
 }
 
 /* ----------------------------- Logging ------------------------------ */
@@ -355,6 +469,9 @@ function render() {
   renderButtons();
   renderTips();
   renderToggles();
+  renderScoreboard();
+  renderPipCount();
+  renderCheckersCount();
 }
 
 function renderBoard() {
@@ -384,27 +501,51 @@ function buildPointEl(pointNum, isTop) {
   label.textContent = pointNum;
   div.appendChild(label);
 
+  const legalSrc = isLegalSource(pointNum);
+  const legalDest = isLegalDestination(pointNum);
+
   const stack = document.createElement("div");
   stack.className = "checker-stack";
   const p = state.points[pointNum];
+  const canDragFromHere = p.owner === state.turn && isHumanTurn() && state.hasRolled && !state.gameOver;
   for (let i = 0; i < p.count; i++) {
     const c = document.createElement("div");
     c.className = `checker ${p.owner}`;
     if (i === p.count - 1 && p.count > 5) c.textContent = p.count;
-    if (i === p.count - 1 && pointNum === state.selectedSource) c.classList.add("selected");
+    if (i === p.count - 1 && pointNum === state.selectedSource) {
+      c.classList.add("selected");
+    } else if (i === p.count - 1 && legalSrc) {
+      // The checker nearest the point's tip is the one that would actually
+      // move, so it — not the whole stack — gets the "you can pick this
+      // checker up" glow.
+      c.classList.add("movable");
+    }
+    if (p.count === 1 && isHittableBlot(pointNum)) c.classList.add("hittable");
+    if (canDragFromHere) {
+      c.draggable = true;
+      c.addEventListener("dragstart", (e) => onCheckerDragStart(e, pointNum));
+      c.addEventListener("dragend", onCheckerDragEnd);
+    }
     if (p.count > 5 && i > 0 && i < p.count - 1) continue; // avoid overdraw, handled below
     stack.appendChild(c);
   }
   div.appendChild(stack);
-
-  const legalSrc = isLegalSource(pointNum);
-  const legalDest = isLegalDestination(pointNum);
 
   if (legalSrc) div.classList.add("legal-source");
   if (legalDest && mode === "beginner") div.classList.add("legal-destination");
   if (legalSrc || legalDest) {
     div.addEventListener("click", () => onPointClick(pointNum));
   }
+
+  div.addEventListener("dragover", (e) => {
+    if (dragSourceValue === null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  });
+  div.addEventListener("drop", (e) => {
+    e.preventDefault();
+    handleDrop(pointNum);
+  });
 
   return div;
 }
@@ -417,11 +558,20 @@ function renderBar() {
     // bottom bar shows white's bar checkers.
     const player = id === "barTop" ? "black" : "white";
     const count = state.bar[player];
+    const canDrag = player === state.turn && isHumanTurn() && state.hasRolled && !state.gameOver && count > 0;
+    const legalSrc = player === state.turn && isLegalSource("bar");
     for (let i = 0; i < Math.min(count, 5); i++) {
       const c = document.createElement("div");
       c.className = `bar-checker ${player}`;
       if (i === 0 && state.selectedSource === "bar" && player === state.turn) {
         c.classList.add("selected");
+      } else if (i === 0 && legalSrc) {
+        c.classList.add("movable");
+      }
+      if (canDrag) {
+        c.draggable = true;
+        c.addEventListener("dragstart", (e) => onCheckerDragStart(e, "bar"));
+        c.addEventListener("dragend", onCheckerDragEnd);
       }
       el.appendChild(c);
     }
@@ -520,6 +670,7 @@ function onDieClick(value) {
   if (!isHumanTurn() || legalSourcesForDie(state.turn, value).length === 0) return;
   state.selectedDie = state.selectedDie === value ? null : value;
   state.selectedSource = null;
+  autoSelectBarSource();
   render();
 }
 
@@ -545,6 +696,8 @@ function performMove(source) {
     return;
   }
 
+  autoSelectDie();
+  autoSelectBarSource();
   render();
 }
 
@@ -676,82 +829,89 @@ function findHitOpportunities(turn) {
   return opportunities;
 }
 
-function getBeginnerTip() {
-  const turn = state.turn;
-
-  if (state.gameOver) return "";
-
-  if (isAiTurn()) {
-    return `${displayName("black")} is taking its turn \u2014 you'll get control back once it finishes.`;
-  }
-
-  if (!state.hasRolled) {
-    return `${displayName(turn)}'s turn. Click "Roll dice" to see how far you can move — each die is a number of points to travel.`;
-  }
-
-  if (state.bar[turn] > 0) {
-    if (state.selectedDie === null) {
-      return `${displayName(turn)} has a checker on the bar. Pick a die below, then click the bar to bring it back onto the board. You must do this before making any other move.`;
+// True if pointNum holds a single opposing checker that the current player
+// could hit right now with one of the dice they have left this turn.
+function isHittableBlot(pointNum) {
+  if (state.gameOver || !state.hasRolled || !isHumanTurn()) return false;
+  const p = state.points[pointNum];
+  if (p.owner !== opponent(state.turn) || p.count !== 1) return false;
+  for (const die of [...new Set(state.remaining)]) {
+    for (const source of legalSourcesForDie(state.turn, die)) {
+      if (destinationForDie(state.turn, source, die) === pointNum) return true;
     }
-    const entry = turn === "white" ? 25 - state.selectedDie : state.selectedDie;
-    const canEnter = legalSourcesForDie(turn, state.selectedDie).includes("bar");
-    if (canEnter) {
-      return `Click the bar to enter your checker on point ${entry}.`;
-    }
-    return `Point ${entry} is blocked (held by two or more opposing checkers), so that die can't be used to enter. Try the other die.`;
   }
-
-  if (state.remaining.length === 0) {
-    return `No dice left to play. Click "End turn" to pass to ${displayName(opponent(turn))}.`;
-  }
-
-  if (!anyLegalMoveRemaining(turn)) {
-    return `No legal moves available with the remaining dice. Click "End turn" to pass to ${displayName(opponent(turn))}.`;
-  }
-
-  if (state.selectedDie === null) {
-    let tip = `Pick one of the highlighted dice below — that's how many points your checker will travel.`;
-    if (allCheckersInHome(turn)) {
-      tip += ` All of ${displayName(turn)}'s checkers are home, so bearing off has started.`;
-    }
-    return tip;
-  }
-
-  if (state.selectedSource !== null) {
-    return `That checker is picked up \u2014 click the glowing destination to move it there, or click the checker again to put it back down.`;
-  }
-
-  return `Click a glowing checker (or the bar, if lit up) to move it ${state.selectedDie} point${state.selectedDie === 1 ? "" : "s"}. Landing on a lone opposing checker — a "blot" — sends it to the bar!`;
+  return false;
 }
 
+// Rotating glossary shown in place of a contextual tip — a steady stream
+// of simple backgammon term definitions, cycled on a timer.
+const GLOSSARY = [
+  { term: "Blot", def: "A single checker alone on a point. It can be hit and sent to the bar." },
+  { term: "Anchor", def: "A point you hold deep in your opponent's home board, giving you a safe base while behind in the race." },
+  { term: "Prime", def: "A row of six consecutive points you own, trapping any opposing checker behind it." },
+  { term: "Pip", def: "One space of movement. \"Pip count\" is how far a player's checkers still have to travel in total." },
+  { term: "Bear off", def: "Removing a checker from the board for good, once all of your checkers are in your home board." },
+  { term: "Hit", def: "Landing on an opponent's blot, sending it back to the bar." },
+  { term: "Home board", def: "The six points where a player must gather all their checkers before they can bear off." },
+  { term: "The bar", def: "Where hit checkers go. They must re-enter through the opponent's home board before any other move." },
+  { term: "Gammon", def: "Winning a game before your opponent bears off a single checker — worth double the points." },
+  { term: "Made point", def: "A point held by two or more of your own checkers, which your opponent can't land on." },
+  { term: "Race", def: "A position where hitting is unlikely and the game comes down to who gets home and bears off first." },
+  { term: "Back game", def: "A risky strategy of holding two or more deep anchors while far behind, hoping for a late hit." },
+];
+let glossaryIndex = 0;
+
+function renderGlossaryTip() {
+  const box = document.getElementById("tipsBox");
+  const text = document.getElementById("tipsText");
+  if (mode !== "beginner") {
+    box.classList.add("hidden");
+    return;
+  }
+  box.classList.remove("hidden");
+  const entry = GLOSSARY[glossaryIndex % GLOSSARY.length];
+  text.innerHTML = `<strong>${entry.term}:</strong> ${entry.def}`;
+}
+
+setInterval(() => {
+  glossaryIndex++;
+  renderGlossaryTip();
+}, 30000);
+
+// Short, high-signal strategy line shown under the board. Prioritizes the
+// single most useful thing right now: a core-concept reminder at the very
+// start of the game, then blot danger, then a hit, then bear-off status,
+// then the race.
 function getStrategyTip() {
   const turn = state.turn;
   const opp = opponent(turn);
 
-  // 1. A blot of yours is the single most urgent thing on the board — call
-  //    it out by exact point, and say precisely whether it can be hit right now.
+  // 0. Very first turn of the game: explain the goal and bearing off once.
+  if (moveNumber === 0) {
+    return `Goal: move all 15 checkers around the board into your home board, then "bear off" (remove them from play). First to bear off all 15 wins.`;
+  }
+
+  // 1. A blot of yours — the most urgent thing on the board.
   for (let i = 1; i <= 24; i++) {
     const p = state.points[i];
     if (p.owner === turn && p.count === 1) {
       const shots = directShotsAt(i, turn);
       const shotText = shots.length > 0
-        ? ` Right now, ${displayName(opp)} could hit it directly with a roll of ${shots.join(" or ")}.`
-        : ` ${displayName(opp)} doesn't have a checker positioned to hit it directly on the next roll, but it's still worth covering when you get the chance.`;
-      return `Heads up: point ${i} has only one of ${displayName(turn)}'s checkers on it, with no second checker there to protect it. That's called a \u201cblot\u201d \u2014 if an opposing checker lands exactly there, your checker gets \u201chit\u201d and sent all the way back to the bar, forcing it to re-enter and travel the whole board again.${shotText} When you get the chance, move it onto a point where you already have another checker \u2014 two or more together can't be hit.`;
+        ? ` ${displayName(opp)} can hit it with a ${shots.join(" or ")}.`
+        : ` No direct shot available right now.`;
+      return `Blot on point ${i} \u2014 a lone checker can be hit and sent to the bar.${shotText} Cover it when you can.`;
     }
   }
 
-  // 2. No blot of your own? Check whether you can hit one of the opponent's,
-  //    using the actual dice you currently have left to play.
+  // 2. A hit available with the dice you have left.
   const opportunities = findHitOpportunities(turn);
   if (opportunities.length > 0) {
     const { source, die, dest } = opportunities[0];
-    const fromLabel = source === "bar" ? "your checker on the bar" : `your checker on point ${source}`;
-    return `You have a hit available right now: ${fromLabel} can move to point ${dest} using your ${die}, landing on ${displayName(opp)}'s lone checker there. That would send it all the way back to the bar and cost ${displayName(opp)} a lot of ground \u2014 usually well worth taking.`;
+    const fromLabel = source === "bar" ? "the bar" : `point ${source}`;
+    return `Hit available: ${fromLabel} \u2192 point ${dest} with your ${die}, sending ${displayName(opp)}'s checker to the bar.`;
   }
 
-  // 3. Bearing off is underway — report exactly how many checkers are left
-  //    and which point is farthest back.
+  // 3. Bearing off in progress.
   if (allCheckersInHome(turn)) {
     const orderedHome = turn === "white"
       ? [...HOME[turn]].sort((a, b) => b - a)
@@ -761,47 +921,33 @@ function getStrategyTip() {
       if (state.points[pt].owner === turn && state.points[pt].count > 0) { farthest = pt; break; }
     }
     const remaining = 15 - state.off[turn];
-    const farthestText = farthest !== null
-      ? ` Your farthest-back checker${state.points[farthest].count > 1 ? "s sit" : " sits"} on point ${farthest} \u2014 clear that point first when you have a choice, so an unlucky roll later can't strand a straggler out there alone.`
-      : "";
-    return `Every one of ${displayName(turn)}'s checkers has made it into the home board, so you're bearing off now \u2014 permanently removing checkers once they've completed the full trip. You have ${remaining} checker${remaining === 1 ? "" : "s"} left to bear off.${farthestText}`;
+    const farthestText = farthest !== null ? ` Clear point ${farthest} first if you have a choice.` : "";
+    return `Bearing off: ${remaining} checker${remaining === 1 ? "" : "s"} left to remove from the board.${farthestText}`;
   }
 
-  // 4. Nothing urgent — report the actual race and board shape with real numbers.
+  // 4. Otherwise, the race.
   const myPips = pipCount(turn);
   const oppPips = pipCount(opp);
   const diff = Math.abs(myPips - oppPips);
-  const mine = madePointsList(turn);
-  const theirs = madePointsList(opp);
-  const pointsText = `${displayName(turn)} has made ${mine.length ? mine.length + " point" + (mine.length === 1 ? "" : "s") + " so far (" + mine.join(", ") + ")" : "no points yet"}, and ${displayName(opp)} has made ${theirs.length ? theirs.length + " (" + theirs.join(", ") + ")" : "none yet"}.`;
 
   if (myPips < oppPips) {
-    return `${displayName(turn)} has ${myPips} pips left to travel versus ${oppPips} for ${displayName(opp)} \u2014 you're ahead in the race by ${diff}. (A \u201cpip\u201d is just one space of movement; fewer left is better.) When you're ahead, the safest plan is usually to run your checkers home directly and avoid unnecessary risks. ${pointsText}`;
+    return `Ahead by ${diff} pips \u2014 run your checkers home and avoid risks.`;
   } else if (myPips > oppPips) {
-    return `${displayName(turn)} has ${myPips} pips left to travel versus ${oppPips} for ${displayName(opp)} \u2014 you're behind in the race by ${diff}. When you're behind, playing it purely safe usually won't win \u2014 you'll just lose more slowly. Look for chances to hit a blot, or hold a point deep in ${displayName(opp)}'s home board (an \u201canchor\u201d) so you have a safe base to wait for one. ${pointsText}`;
+    return `Behind by ${diff} pips \u2014 playing safe won't win here. Look to hit or hold an anchor.`;
   } else {
-    return `The race is essentially even \u2014 both ${displayName(turn)} and ${displayName(opp)} have about ${myPips} pips left to travel. With things this close, focus on making solid points (two or more checkers together, which can't be hit) and avoiding blots of your own. ${pointsText}`;
+    return `Race is even \u2014 focus on making points and keeping your checkers covered.`;
   }
 }
 
 function renderTips() {
-  const box = document.getElementById("tipsBox");
-  const text = document.getElementById("tipsText");
   const stratBox = document.getElementById("strategyBox");
   const stratText = document.getElementById("strategyText");
 
+  renderGlossaryTip();
+
   if (mode !== "beginner") {
-    box.classList.add("hidden");
     stratBox.classList.add("hidden");
     return;
-  }
-
-  const tip = getBeginnerTip();
-  if (!tip) {
-    box.classList.add("hidden");
-  } else {
-    box.classList.remove("hidden");
-    text.textContent = tip;
   }
 
   if (state.gameOver || isAiTurn()) {
@@ -817,29 +963,168 @@ function renderToggles() {
   document.getElementById("modeNormalBtn").classList.toggle("active", mode === "normal");
   document.getElementById("opponentHumanBtn").classList.toggle("active", opponentType === "human");
   document.getElementById("opponentComputerBtn").classList.toggle("active", opponentType === "computer");
+
+  const matchFresh = isMatchNotStarted();
+
+  const colorToggle = document.getElementById("colorToggle");
+  colorToggle.style.display = (opponentType === "computer" && matchFresh) ? "flex" : "none";
+  document.getElementById("colorWhiteBtn").classList.toggle("active", humanColor === "white");
+  document.getElementById("colorBlackBtn").classList.toggle("active", humanColor === "black");
+
+  const matchTargetGroup = document.getElementById("matchTargetGroup");
+  matchTargetGroup.style.display = matchFresh ? "flex" : "none";
+  document.getElementById("matchTargetSelect").value = String(matchTarget);
+}
+
+/* ----------------------------- Scoring ------------------------------- */
+
+// Standard gammon/backgammon scoring: 1 point for a normal win, 2 if the
+// loser hasn't borne off a single checker (a "gammon"), 3 if on top of
+// that the loser still has a checker on the bar or in the winner's home
+// board (a "backgammon").
+function computeWinPoints(winner) {
+  const loser = opponent(winner);
+  if (state.off[loser] > 0) return 1;
+
+  if (state.bar[loser] > 0) return 3;
+  for (const pt of HOME[winner]) {
+    if (state.points[pt].owner === loser && state.points[pt].count > 0) return 3;
+  }
+  return 2;
+}
+
+function renderScoreboard() {
+  document.getElementById("scoreTarget").textContent = `Match to ${matchTarget}`;
+  document.getElementById("scoreNameWhite").textContent = displayName("white");
+  document.getElementById("scoreNameBlack").textContent = displayName("black");
+  document.getElementById("scoreValueWhite").textContent = score.white;
+  document.getElementById("scoreValueBlack").textContent = score.black;
+}
+
+// Pip count: total spaces each side still has to travel to bear everything
+// off (see pipCount() below). Recomputed on every render, so it stays
+// current after every move.
+function renderPipCount() {
+  document.getElementById("pipNameWhite").textContent = displayName("white");
+  document.getElementById("pipNameBlack").textContent = displayName("black");
+  document.getElementById("pipValueWhite").textContent = pipCount("white");
+  document.getElementById("pipValueBlack").textContent = pipCount("black");
+}
+
+// How many checkers each side has borne off vs. still has in play.
+function renderCheckersCount() {
+  document.getElementById("ccNameWhite").textContent = displayName("white");
+  document.getElementById("ccNameBlack").textContent = displayName("black");
+  document.getElementById("ccTextWhite").textContent = `${state.off.white} off \u00b7 ${15 - state.off.white} left`;
+  document.getElementById("ccTextBlack").textContent = `${state.off.black} off \u00b7 ${15 - state.off.black} left`;
 }
 
 /* ----------------------------- Win modal ----------------------------- */
 
 function showWin(player) {
-  document.getElementById("winTitle").textContent = "Game over";
-  document.getElementById("winText").textContent = `${displayName(player)} wins by bearing off all 15 checkers!`;
+  const points = computeWinPoints(player);
+  score[player] += points;
+  renderScoreboard();
+
+  const bonus = points === 3 ? " \u2014 a backgammon!" : points === 2 ? " \u2014 a gammon!" : "";
+  matchOver = score[player] >= matchTarget;
+
+  document.getElementById("winTitle").textContent = matchOver ? "Match over!" : "Game over";
+  const gameText = `${displayName(player)} wins the game by bearing off all 15 checkers!${bonus} (+${points} point${points === 1 ? "" : "s"})`;
+  const matchText = matchOver
+    ? ` ${displayName(player)} wins the match, ${score.white}\u2013${score.black}!`
+    : "";
+  document.getElementById("winText").textContent = gameText + matchText;
+  document.getElementById("playAgainBtn").textContent = matchOver ? "Start new match" : "Play again";
+
   document.getElementById("winModal").classList.add("open");
 }
 
 /* ----------------------------- Wiring -------------------------------- */
 
-function resetGame() {
+function resetGame(resetScore = false) {
   state = freshState();
   moveNumber = 0;
   document.getElementById("moveLog").innerHTML = "";
   document.getElementById("winModal").classList.remove("open");
+  if (resetScore) {
+    score = { white: 0, black: 0 };
+    matchOver = false;
+  }
   render();
+  // Don't let the AI (or anyone) start playing until a pending color choice
+  // for this match has actually been made.
+  if (opponentType === "computer" && !colorChosenForMatch) {
+    maybeShowColorChoice();
+  } else {
+    maybeStartAiTurn();
+  }
 }
 
 document.getElementById("rollBtn").addEventListener("click", rollDice);
 document.getElementById("endTurnBtn").addEventListener("click", endTurn);
-document.getElementById("newGameBtn").addEventListener("click", resetGame);
+
+// Generic confirm modal, reused by both "New Game" and "New Match" so each
+// gets its own gentle reminder of exactly what it will discard.
+let pendingConfirmAction = null;
+function openConfirmModal({ title, text, confirmLabel, onConfirm }) {
+  document.getElementById("confirmActionTitle").textContent = title;
+  document.getElementById("confirmActionText").textContent = text;
+  document.getElementById("confirmActionBtn").textContent = confirmLabel;
+  pendingConfirmAction = onConfirm;
+  document.getElementById("confirmActionModal").classList.add("open");
+}
+document.getElementById("cancelActionBtn").addEventListener("click", () => {
+  document.getElementById("confirmActionModal").classList.remove("open");
+  pendingConfirmAction = null;
+});
+document.getElementById("confirmActionBtn").addEventListener("click", () => {
+  document.getElementById("confirmActionModal").classList.remove("open");
+  const action = pendingConfirmAction;
+  pendingConfirmAction = null;
+  if (action) action();
+});
+
+// New Game: restarts just the current game, keeping the match score.
+document.getElementById("newGameBtn").addEventListener("click", () => {
+  const gameInProgress = moveNumber > 0 || state.hasRolled;
+  if (!gameInProgress) {
+    resetGame(false);
+    return;
+  }
+  openConfirmModal({
+    title: "Restart this game?",
+    text: `This will restart the current game from the starting position. Your match score (${displayName("white")} ${score.white} \u2013 ${displayName("black")} ${score.black}) stays as is.`,
+    confirmLabel: "Restart game",
+    onConfirm: () => resetGame(false),
+  });
+});
+
+// New Match: resets the score to 0-0 and starts fresh (including a new
+// game already in progress).
+function startNewMatch() {
+  colorChosenForMatch = false;
+  resetGame(true);
+}
+document.getElementById("newMatchBtn").addEventListener("click", () => {
+  const matchInProgress = !(score.white === 0 && score.black === 0 && moveNumber === 0 && !state.hasRolled);
+  if (!matchInProgress) {
+    startNewMatch();
+    return;
+  }
+  const inGameNote = (moveNumber > 0 || state.hasRolled) ? ", including the game you're in the middle of," : "";
+  openConfirmModal({
+    title: "Start a new match?",
+    text: `This will end the current match${inGameNote} and reset the score back to 0\u20130.`,
+    confirmLabel: "Reset match",
+    onConfirm: startNewMatch,
+  });
+});
+
+document.getElementById("matchTargetSelect").addEventListener("change", (e) => {
+  matchTarget = parseInt(e.target.value, 10);
+  render();
+});
 
 document.getElementById("modeBeginnerBtn").addEventListener("click", () => {
   mode = "beginner";
@@ -853,13 +1138,34 @@ document.getElementById("modeNormalBtn").addEventListener("click", () => {
 document.getElementById("opponentHumanBtn").addEventListener("click", () => {
   if (opponentType === "human") return;
   opponentType = "human";
-  resetGame();
+  resetGame(true);
+  document.getElementById("colorChoiceModal").classList.remove("open");
 });
 document.getElementById("opponentComputerBtn").addEventListener("click", () => {
   if (opponentType === "computer") return;
   opponentType = "computer";
-  resetGame();
+  colorChosenForMatch = false;
+  resetGame(true);
 });
+document.getElementById("colorWhiteBtn").addEventListener("click", () => {
+  if (opponentType !== "computer" || humanColor === "white") return;
+  humanColor = "white";
+  resetGame(true);
+});
+document.getElementById("colorBlackBtn").addEventListener("click", () => {
+  if (opponentType !== "computer" || humanColor === "black") return;
+  humanColor = "black";
+  resetGame(true);
+});
+function chooseColor(color) {
+  humanColor = color;
+  colorChosenForMatch = true;
+  document.getElementById("colorChoiceModal").classList.remove("open");
+  render();
+  maybeStartAiTurn();
+}
+document.getElementById("chooseWhiteBtn").addEventListener("click", () => chooseColor("white"));
+document.getElementById("chooseBlackBtn").addEventListener("click", () => chooseColor("black"));
 
 document.getElementById("rulesBtn").addEventListener("click", () => {
   document.getElementById("rulesModal").classList.add("open");
@@ -867,6 +1173,24 @@ document.getElementById("rulesBtn").addEventListener("click", () => {
 document.getElementById("closeRules").addEventListener("click", () => {
   document.getElementById("rulesModal").classList.remove("open");
 });
-document.getElementById("playAgainBtn").addEventListener("click", resetGame);
+document.getElementById("playAgainBtn").addEventListener("click", () => resetGame(matchOver));
+
+// Off-trays are static elements (unlike points/bar, they aren't rebuilt
+// every render), so their drag-and-drop listeners are wired once here.
+["offWhite", "offBlack"].forEach((id) => {
+  const ownerColor = id === "offWhite" ? "white" : "black";
+  const el = document.getElementById(id);
+  el.addEventListener("dragover", (e) => {
+    if (dragSourceValue === null || state.turn !== ownerColor) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  });
+  el.addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (state.turn !== ownerColor) return;
+    handleDrop("off");
+  });
+});
 
 render();
+maybeShowColorChoice();
